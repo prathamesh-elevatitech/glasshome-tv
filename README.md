@@ -30,9 +30,13 @@ TCL-specific.
 - **Remote shortcuts** – Netflix / Prime Video / YouTube buttons on TCL remotes.
 - App open/close zoom, focus click sound, night dimming after 9 pm.
 
-| Aerials | Screen Saver settings |
+| Top Shelf | Top Shelf (press Up) |
 |---|---|
-| ![](docs/aerials.png) | ![](docs/screen-saver-settings.png) |
+| ![](docs/top-shelf.png) | ![](docs/top-shelf-carousel.png) |
+
+| Control Center | Aerials | Screen Saver settings |
+|---|---|---|
+| ![](docs/control-center.png) | ![](docs/aerials.png) | ![](docs/screen-saver-settings.png) |
 
 ## Install
 
