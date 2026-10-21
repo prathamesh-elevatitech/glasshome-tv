@@ -1,0 +1,4 @@
+out/
+*.keystore
+removed-packages.txt
+.DS_Store

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:colorBackground">@android:color/black</item>
+        <item name="android:windowShowWallpaper">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:defaultFocusHighlightEnabled">false</item>
+        <item name="android:colorAccent">#FFFFFF</item>
+        <item name="android:windowAnimationStyle">@style/HomeTransitions</item>
+    </style>
+
+    <!-- Home appears instantly when an app closes; it then plays its own zoom-back-into-the-icon. -->
+    <style name="HomeTransitions">
+        <item name="android:activityOpenExitAnimation">@anim/hold</item>
+        <item name="android:activityCloseEnterAnimation">@anim/none</item>
+        <item name="android:taskOpenExitAnimation">@anim/hold</item>
+        <item name="android:taskToFrontEnterAnimation">@anim/none</item>
+        <item name="android:taskToBackEnterAnimation">@anim/none</item>
+        <item name="android:taskCloseEnterAnimation">@anim/none</item>
+    </style>
+</resources>

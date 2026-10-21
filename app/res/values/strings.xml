@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="key_service_desc">Opens Control Center when you press the Settings button on the remote.</string>
+</resources>
