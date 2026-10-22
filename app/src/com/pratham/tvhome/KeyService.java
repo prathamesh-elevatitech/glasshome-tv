@@ -202,6 +202,7 @@ public class KeyService extends AccessibilityService implements ControlCenter.Ho
     // ---------------------------------------------------------------- control center overlay
 
     private void show() {
+        GlassView.loadStyle(this);
         Root root = new Root(this);
         root.setBackgroundColor(0x40000000);
         View panel = ControlCenter.build(this, this, true);

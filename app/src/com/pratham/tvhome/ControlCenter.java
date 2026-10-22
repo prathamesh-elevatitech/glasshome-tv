@@ -71,6 +71,7 @@ final class ControlCenter {
             {"aerials", "Screen Saver", "circle"},
             {"search", "Search", "circle"},
             {"settings", "Settings", "circle"},
+            {"appearance", "Appearance", "circle"},
             {"nowplaying", "Now Playing", "card"},
     };
     static final String DEFAULT_ON = "wifi,bluetooth,sound,timer,inputs,aerials,search,settings,nowplaying";
@@ -239,6 +240,8 @@ final class ControlCenter {
                 return new Object[] {R.drawable.ic_flight, name, new Intent(c, ScreenSaverSettings.class)};
             case "search":
                 return new Object[] {R.drawable.ic_search, name, new Intent("android.search.action.GLOBAL_SEARCH")};
+            case "appearance":
+                return new Object[] {R.drawable.ic_palette, name, new Intent(c, AppearanceSettings.class)};
             case "settings":
             default:
                 return new Object[] {R.drawable.ic_gear, name, new Intent(Settings.ACTION_SETTINGS)};

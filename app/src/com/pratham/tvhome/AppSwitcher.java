@@ -26,7 +26,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * tvOS App Switcher (double-press Home): a carousel of recently used apps. OK opens one, Up closes
+ * tvOS App Switcher (double-press Home): a carousel of recently used apps. OK opens one, Up removes
  * it, Back dismisses. Needs the GET_USAGE_STATS app-op (granted by install.sh).
  */
 final class AppSwitcher extends FrameLayout {
@@ -40,8 +40,27 @@ final class AppSwitcher extends FrameLayout {
     AppSwitcher(Context c, int screenW, Runnable dismiss) {
         super(c);
         this.dismiss = dismiss;
-        setBackgroundColor(0xEB0B0B0F);
+        setBackgroundColor(0xF00B0B0F);
         setClipChildren(false);
+
+        // A soft glow in the focused app's colour, behind the cards.
+        glowFill = new android.graphics.drawable.GradientDrawable();
+        glowFill.setGradientType(android.graphics.drawable.GradientDrawable.RADIAL_GRADIENT);
+        glowFill.setGradientRadius(Ui.dp(260));
+        glowFill.setColors(new int[] {0x00000000, 0x00000000});
+        View glow = new View(c);
+        glow.setBackground(glowFill);
+        LayoutParams glp = new LayoutParams(Ui.dp(560), Ui.dp(560), Gravity.CENTER);
+        glp.rightMargin = Ui.dp(260);
+        addView(glow, glp);
+
+        TextView title = Ui.text(c, 20, Ui.semibold, Color.WHITE);
+        title.setText("Recent Apps");
+        LayoutParams tlp = new LayoutParams(-2, -2, Gravity.TOP | Gravity.START);
+        tlp.leftMargin = Ui.dp(48);
+        tlp.topMargin = Ui.dp(36);
+        addView(title, tlp);
+        addView(ramMeter(c), ramParams());
         cardW = Ui.dp(440);
         cardH = Math.round(cardW * 9 / 16f);
 
@@ -60,7 +79,7 @@ final class AppSwitcher extends FrameLayout {
         addView(scroller, new LayoutParams(-1, cardH + Ui.dp(120), Gravity.CENTER_VERTICAL));
 
         TextView hint = Ui.text(c, 15, Ui.medium, 0x99FFFFFF);
-        hint.setText("OK to open  ·  ▲ to close an app");
+        hint.setText("Press ▲ on an app to remove it from Recents");
         LayoutParams hlp = new LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
         hlp.bottomMargin = Ui.dp(48);
         addView(hint, hlp);
@@ -78,6 +97,75 @@ final class AppSwitcher extends FrameLayout {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(cardW, -2);
         if (i > 0) lp.leftMargin = Ui.dp(36);
         return lp;
+    }
+
+    private final android.graphics.drawable.GradientDrawable glowFill;
+    private int glowColor;
+    private android.animation.ValueAnimator glowAnim;
+
+    /** Blends the background glow to {@code c}. */
+    private void glowTo(int c) {
+        if (glowAnim != null) glowAnim.cancel();
+        glowAnim = android.animation.ValueAnimator.ofObject(new android.animation.ArgbEvaluator(), glowColor, c);
+        glowAnim.setDuration(420);
+        glowAnim.addUpdateListener(a -> {
+            glowColor = (int) a.getAnimatedValue();
+            int rgb = glowColor & 0x00FFFFFF;
+            glowFill.setColors(new int[] {0xB3000000 | rgb, 0x00000000 | rgb});
+        });
+        glowAnim.start();
+    }
+
+    private LayoutParams ramParams() {
+        LayoutParams lp = new LayoutParams(Ui.dp(250), Ui.dp(40), Gravity.TOP | Gravity.END);
+        lp.rightMargin = Ui.dp(48);
+        lp.topMargin = Ui.dp(30);
+        return lp;
+    }
+
+    /** "RAM 1.1 GB used of 1.8 GB" with a bar, refreshed while the switcher is open. */
+    private View ramMeter(Context c) {
+        GlassView pill = new GlassView(c, 20).solid(true).fallback(0x2EFFFFFF);
+        LinearLayout r = new LinearLayout(c);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(Ui.dp(14), 0, Ui.dp(14), 0);
+        final TextView t = Ui.text(c, 12, Ui.semibold, Color.WHITE);
+        r.addView(t);
+        final FrameLayout track = new FrameLayout(c);
+        android.graphics.drawable.GradientDrawable tb = new android.graphics.drawable.GradientDrawable();
+        tb.setColor(0x40FFFFFF);
+        tb.setCornerRadius(Ui.dp(3));
+        track.setBackground(tb);
+        final View bar = new View(c);
+        android.graphics.drawable.GradientDrawable bb = new android.graphics.drawable.GradientDrawable();
+        bb.setColor(Color.WHITE);
+        bb.setCornerRadius(Ui.dp(3));
+        bar.setBackground(bb);
+        track.addView(bar, new FrameLayout.LayoutParams(0, -1));
+        LinearLayout.LayoutParams tl = new LinearLayout.LayoutParams(0, Ui.dp(5), 1f);
+        tl.leftMargin = Ui.dp(12);
+        r.addView(track, tl);
+        pill.addView(r, new FrameLayout.LayoutParams(-1, -1));
+        final ActivityManager am = c.getSystemService(ActivityManager.class);
+        Runnable tick = new Runnable() {
+            @Override
+            public void run() {
+                ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
+                am.getMemoryInfo(mi);
+                float total = mi.totalMem / 1073741824f, used = (mi.totalMem - mi.availMem) / 1073741824f;
+                t.setText(String.format(java.util.Locale.US, "RAM %.1f GB used of %.1f GB", used, total));
+                int w = track.getWidth();
+                if (w > 0) {
+                    FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) bar.getLayoutParams();
+                    lp.width = Math.round(w * used / total);
+                    bar.setLayoutParams(lp);
+                }
+                if (isAttachedToWindow()) postDelayed(this, 1500);
+            }
+        };
+        pill.post(tick);
+        return pill;
     }
 
     void focusFirst() {
@@ -104,11 +192,17 @@ final class AppSwitcher extends FrameLayout {
         for (Map.Entry<String, Long> e : sorted) {
             String pkg = e.getKey();
             if (pkg.equals(c.getPackageName())) continue;
+            // Closed from the switcher, and not opened again since.
+            if (e.getValue() <= closedAt(c, pkg)) continue;
             if (launchIntent(pm, pkg) == null) continue;
             out.add(pkg);
             if (out.size() >= MAX) break;
         }
         return out;
+    }
+
+    private static long closedAt(Context c, String pkg) {
+        return Profiles.prefs(c).getLong("closed:" + pkg, 0);
     }
 
     private static Intent launchIntent(PackageManager pm, String pkg) {
@@ -127,6 +221,7 @@ final class AppSwitcher extends FrameLayout {
         } catch (PackageManager.NameNotFoundException ignored) {
         }
         AppEntry app = new AppEntry(pkg, label.toString(), launchIntent(pm, pkg), false);
+        final int color = Ui.averageColor(banner != null ? banner : icon);
         app.banner = banner;
         if (banner == null) {
             app.glyph = icon;
@@ -142,6 +237,7 @@ final class AppSwitcher extends FrameLayout {
                 if (f) {
                     Ui.tick(getContext());
                     scroller.smoothScrollTo(getLeft() + getWidth() / 2 - scroller.getWidth() / 2, 0);
+                    glowTo(color);
                 }
                 animate().scaleX(f ? 1f : 0.86f).scaleY(f ? 1f : 0.86f).alpha(f ? 1f : 0.55f)
                         .setDuration(f ? 420 : 220)
@@ -195,7 +291,11 @@ final class AppSwitcher extends FrameLayout {
         return item;
     }
 
-    /** Swipe-up-to-quit: the card flies up and the app's background process is killed. */
+    /**
+     * Remove from Recents: the card flies up and the app leaves the list. Android only lets a
+     * launcher stop processes that are already idle, so busy apps keep running until Android
+     * reclaims their memory itself; a real force-stop would need system or adb privileges.
+     */
     private void close(final View item, final String pkg) {
         int i = row.indexOfChild(item);
         item.animate().translationY(-Ui.dp(500)).alpha(0f).setDuration(320)
@@ -212,6 +312,8 @@ final class AppSwitcher extends FrameLayout {
                 }).start();
         ActivityManager am = getContext().getSystemService(ActivityManager.class);
         am.killBackgroundProcesses(pkg);
+        // Android keeps its "last used" record, so remember the close ourselves.
+        Profiles.prefs(getContext()).edit().putLong("closed:" + pkg, System.currentTimeMillis()).apply();
     }
 
     @Override

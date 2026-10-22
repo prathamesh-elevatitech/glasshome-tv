@@ -21,22 +21,34 @@ TCL-specific.
 - **Top Shelf** – focus an app in the dock and its *Continue Watching* (e.g. Netflix) or featured
   content fills the screen with title, description and progress. Press Up for **Resume / Play** and
   **More Info**; Left/Right to page. Data comes from the TV's own database (TvContract).
+  Optional **Row** style: a card row above the dock, and Up again for a clean full-screen backdrop.
 - **Control Center** – gear button on the remote (works inside apps too): Sleep, Wi-Fi, Bluetooth,
   Sound, Sleep Timer, Inputs, Screen Saver, Search, Settings, Now Playing. Customisable (✏️ button).
 - **Aerials screensaver** – slow drone footage with place names (OK shows where; ◀ ▶ skip); choose
   categories in Screen Saver settings.
 - **Profiles** – "Who's Watching?" with a separate dock and wallpaper per person.
-- **App Switcher** – double-press Home; Up closes an app.
+- **App Switcher** – double-press Home: recent apps as big cards with a glow in the app's colour,
+  a live RAM meter, and Up to remove an app from Recents.
+- **tvOS icon pack** – each app's own logo, scaled to tvOS proportions on its brand colour
+  (or switch back to the apps' original TV banners).
+- **Appearance** – Liquid Glass or Frosted Glass, Dark Mode (On / Automatic after 7 pm), blur level,
+  Top Shelf style, and an app-colour background that tints the screen for the selected dock app.
+- **Settings panels** – Customise, Appearance and Screen Saver open as a glass panel over the home
+  screen, in the tvOS settings style.
 - **Remote shortcuts** – Netflix / Prime Video / YouTube buttons on TCL remotes.
-- App open/close zoom, focus click sound, night dimming after 9 pm.
+- App open/close zoom, spring-physics focus motion, focus click sound, night dimming after 9 pm.
 
 | Top Shelf | Top Shelf (press Up) |
 |---|---|
 | ![](docs/top-shelf.png) | ![](docs/top-shelf-carousel.png) |
 
-| Control Center | Aerials | Screen Saver settings |
-|---|---|---|
-| ![](docs/control-center.png) | ![](docs/aerials.png) | ![](docs/screen-saver-settings.png) |
+| Control Center | Appearance |
+|---|---|
+| ![](docs/control-center.png) | ![](docs/appearance.png) |
+
+| Aerials | Screen Saver settings |
+|---|---|
+| ![](docs/aerials.png) | ![](docs/screen-saver-settings.png) |
 
 ## Install
 
@@ -83,6 +95,7 @@ everything.
 
 - **Profile names:** `Profiles.NAMES` in `app/src/.../Profiles.java`.
 - **Dock defaults / first-run order:** `DEFAULT_ORDER` in `MainActivity.java`.
+- **Appearance / Control Center:** from Control Center → ✏️ Customise.
 - **Remote app buttons:** `APP_KEYS` in `KeyService.java` (key codes for other remotes can be found
   with `adb logcat | grep handleKeyBeforeQueueing`).
 - **Aerial clips:** `CLIPS` in `AerialView.java`.
@@ -92,6 +105,8 @@ everything.
 - The open/close animation imitates tvOS; third-party launchers can't animate another app's real
   window (Android reserves that for system launchers).
 - On low-end TVs animations run at ~48 fps; true glass blur behind other apps isn't available.
+- "Remove from Recents" only stops apps Android considers idle; force-stopping busy apps needs
+  system or adb privileges, which the launcher deliberately doesn't take.
 - Top Shelf only shows apps that publish to Android's TV database (Netflix, YouTube, Apple TV app,
   Prime Video's picks, Airtel Xstream, …). No app currently publishes preview videos.
 - The remote's gear button only reaches the launcher through the accessibility service; some TV

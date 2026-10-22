@@ -33,6 +33,15 @@ import java.util.List;
 class GlassView extends FrameLayout {
     static Backdrop backdrop;
 
+    /** Appearance: Frosted (milky, softer) instead of clear Liquid Glass; Dark mode darkens it. */
+    static boolean frostedStyle, darkStyle;
+    private static final Paint styleWash = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    static void loadStyle(Context c) {
+        frostedStyle = Appearance.frosted(c);
+        darkStyle = Appearance.dark(c);
+    }
+
     private final float radius;
     private final RectF rect = new RectF();
     private final Paint glass = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
@@ -194,7 +203,12 @@ class GlassView extends FrameLayout {
             tint.setColor(fallbackColor);
         }
         c.drawRoundRect(rect, radius, radius, tint);
-        c.drawRoundRect(rect, radius, radius, gloss);
+        if (frostedStyle || darkStyle) {
+            // Frosted: a milky layer that hides more of what's behind. Dark: a smoky layer.
+            styleWash.setColor(frostedStyle ? (darkStyle ? 0x8C2C2C30 : 0x4DE5E5EA) : 0x59000000);
+            c.drawRoundRect(rect, radius, radius, styleWash);
+        }
+        if (!(frostedStyle && darkStyle)) c.drawRoundRect(rect, radius, radius, gloss);
         if (lit > 0f) {
             fill.setColor(Color.argb(Math.round(lit * 240), 255, 255, 255));
             c.drawRoundRect(rect, radius, radius, fill);

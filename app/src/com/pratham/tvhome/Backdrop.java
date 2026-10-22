@@ -46,7 +46,10 @@ final class Backdrop {
         try (InputStream in = c.getAssets().open(WALLPAPERS[index % WALLPAPERS.length])) {
             sharp = BitmapFactory.decodeStream(in, null, o);
         }
-        Bitmap blurred = Ui.blur(sharp, 192, 108, 3);
+        // Appearance → Blur: smaller sample + wider radius = softer glass.
+        int level = Appearance.blur(c);
+        Bitmap blurred = level == 0 ? Ui.blur(sharp, 256, 144, 2)
+                : level == 2 ? Ui.blur(sharp, 128, 72, 4) : Ui.blur(sharp, 192, 108, 3);
         // Bake the top/bottom shading into the wallpaper instead of drawing a full-screen
         // gradient over it every frame.
         Bitmap shaded = sharp.copy(Bitmap.Config.RGB_565, true);

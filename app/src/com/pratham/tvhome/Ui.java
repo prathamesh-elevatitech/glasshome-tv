@@ -148,9 +148,21 @@ final class Ui {
      * gloss, bright rim and anti-aliased rounded corners. One bitmap draw per frame is far cheaper
      * on this TV's GPU than clipped child views.
      */
+    /** Icon pack: "tvos" (logo on its colour, from the app's adaptive icon) or "banner" (the app's own). */
+    static String iconPack = "tvos";
+
     static Bitmap bakeTile(AppEntry app, int w, int h, float r) {
         if (app.tile != null && app.tile.getWidth() == w && app.tile.getHeight() == h) return app.tile;
         if (app.members != null) return bakeFolder(app, w, h, r);
+        if ("com.android.tv.settings".equals(app.key) && app.glyph != null) {
+            return finishTile(app, drawGear(app.glyph, w, h), w, h, r);
+        }
+        if ("tvos".equals(iconPack) && !app.special && app.icon != null) {
+            Bitmap art = app.icon instanceof android.graphics.drawable.AdaptiveIconDrawable
+                    ? drawTvos((android.graphics.drawable.AdaptiveIconDrawable) app.icon, w, h)
+                    : drawLegacy(app.icon, w, h);
+            return finishTile(app, art, w, h, r);
+        }
         Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         Canvas cv = new Canvas(b);
         if (app.banner != null) {
@@ -167,6 +179,149 @@ final class Ui {
                 app.glyph.draw(cv);
             }
         }
+        return finishTile(app, b, w, h, r);
+    }
+
+    /**
+     * tvOS-style icon from an adaptive icon: its background layer fills the tile, and its logo
+     * (foreground) layer sits centred and large, with no wordy banner art.
+     */
+    private static Bitmap drawTvos(android.graphics.drawable.AdaptiveIconDrawable ai, int w, int h) {
+        Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas cv = new Canvas(b);
+        Drawable bg = ai.getBackground(), fg = ai.getForeground();
+        if (bg != null) {
+            // Stretch the (usually flat or gradient) background over the whole 5:3 tile.
+            bg.setBounds(0, 0, w, h);
+            bg.draw(cv);
+        } else {
+            cv.drawColor(Color.WHITE);
+        }
+        if (fg != null) {
+            // Adaptive foregrounds are 108 units with the logo inside the central ~66: draw the
+            // layer so that safe zone is about 70% of the tile height.
+            int s = Math.round(h * 0.80f / 0.66f);
+            fg.setBounds((w - s) / 2, (h - s) / 2, (w + s) / 2, (h + s) / 2);
+            fg.draw(cv);
+        }
+        return b;
+    }
+
+    /**
+     * tvOS-style icon from a plain launcher icon. The logo inside the icon is measured and scaled
+     * up until it fills the tile like a tvOS icon (wordmarks ~80% of the width, symbols ~66% of the
+     * height). Icons with their own background keep it, extended to the tile edges (gradients
+     * included); logo-only icons sit on white.
+     */
+    private static Bitmap drawLegacy(Drawable icon, int w, int h) {
+        int n = 192; // measuring size
+        Bitmap probe = Bitmap.createBitmap(n, n, Bitmap.Config.ARGB_8888);
+        icon.setBounds(0, 0, n, n);
+        icon.draw(new Canvas(probe));
+        int e = Math.round(n * 0.06f);
+        boolean opaque = Color.alpha(probe.getPixel(e, n / 2)) > 220 && Color.alpha(probe.getPixel(n / 2, e)) > 220;
+        int bgc = opaque ? probe.getPixel(e, n / 2) : 0;
+        // Bounding box of the logo: pixels that differ from the background (or are opaque).
+        int l = n, t = n, r = -1, b = -1;
+        for (int y = 0; y < n; y++) {
+            for (int x = 0; x < n; x++) {
+                int c = probe.getPixel(x, y);
+                boolean ink = opaque ? colorDistance(c, edgeAt(probe, x, y, bgc)) > 60 : Color.alpha(c) > 40;
+                if (ink) {
+                    if (x < l) l = x;
+                    if (x > r) r = x;
+                    if (y < t) t = y;
+                    if (y > b) b = y;
+                }
+            }
+        }
+        probe.recycle();
+        if (r < l || b < t) { l = 0; t = 0; r = n - 1; b = n - 1; }
+        float cw = (r - l + 1) / (float) n, ch = (b - t + 1) / (float) n; // logo size, fraction of icon
+        // Scale the whole icon so the logo fits 80% x 66% of the tile.
+        float k = Math.min(w * 0.80f / cw, h * 0.66f / ch); // icon size in px
+        int s = Math.round(k);
+        float cx = (l + r + 1) / 2f / n, cy = (t + b + 1) / 2f / n; // logo centre, fraction
+        float ox = w / 2f - cx * s, oy = h / 2f - cy * s;          // icon origin in the tile
+
+        Bitmap ic = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888);
+        icon.setBounds(0, 0, s, s);
+        icon.draw(new Canvas(ic));
+        Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas cv = new Canvas(out);
+        if (opaque) {
+            // Extend the icon's own background: per tile row, the scaled icon's edge colours.
+            Paint p = new Paint();
+            int xl = Math.round(s * 0.06f), xr = s - 1 - xl;
+            for (int y = 0; y < h; y++) {
+                int iy = Math.max(0, Math.min(s - 1, Math.round(y - oy)));
+                int cl = ic.getPixel(xl, iy), cr = ic.getPixel(xr, iy);
+                if (Color.alpha(cl) < 220) cl = bgc;
+                if (Color.alpha(cr) < 220) cr = bgc;
+                // Blend left to right across the row, so diagonal gradients stay seamless.
+                p.setShader(new LinearGradient(0, 0, w, 0, cl | 0xFF000000, cr | 0xFF000000, Shader.TileMode.CLAMP));
+                cv.drawRect(0, y, w, y + 1, p);
+            }
+            // Draw the icon minus its rounded-corner fringe, so no corner arcs show.
+            cv.save();
+            cv.clipRect(ox + s * 0.06f, oy + s * 0.06f, ox + s * 0.94f, oy + s * 0.94f);
+            cv.drawBitmap(ic, ox, oy, new Paint(Paint.FILTER_BITMAP_FLAG));
+            cv.restore();
+        } else {
+            cv.drawColor(Color.WHITE);
+            cv.drawBitmap(ic, ox, oy, new Paint(Paint.FILTER_BITMAP_FLAG));
+        }
+        ic.recycle();
+        return out;
+    }
+
+    /** Settings: a brushed-metal gear with a soft shadow on a silver-grey gradient. */
+    private static Bitmap drawGear(Drawable gear, int w, int h) {
+        Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas cv = new Canvas(out);
+        Paint bg = new Paint();
+        bg.setShader(new LinearGradient(0, 0, 0, h, 0xFFB4B4B9, 0xFF6C6C71, Shader.TileMode.CLAMP));
+        cv.drawRect(0, 0, w, h, bg);
+        int s = Math.round(h * 0.90f);
+        Bitmap mask = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888);
+        gear.setBounds(0, 0, s, s);
+        gear.draw(new Canvas(mask));
+        float x = (w - s) / 2f, y = (h - s) / 2f;
+        // Shadow under the gear.
+        Paint sh = new Paint(Paint.FILTER_BITMAP_FLAG);
+        sh.setColorFilter(new android.graphics.PorterDuffColorFilter(0x66000000, PorterDuff.Mode.SRC_IN));
+        sh.setMaskFilter(new BlurMaskFilter(s * 0.05f, BlurMaskFilter.Blur.NORMAL));
+        cv.drawBitmap(mask.extractAlpha(), x, y + s * 0.035f, sh);
+        // The gear in a light-to-dark metal gradient, with a lighter top edge.
+        Bitmap metal = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888);
+        Canvas mc = new Canvas(metal);
+        mc.drawBitmap(mask, 0, 0, null);
+        Paint fill = new Paint();
+        fill.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC_IN));
+        fill.setShader(new LinearGradient(0, 0, 0, s, new int[] {0xFFFFFFFF, 0xFFE3E3E8, 0xFFB9B9BF},
+                new float[] {0f, 0.5f, 1f}, Shader.TileMode.CLAMP));
+        mc.drawRect(0, 0, s, s, fill);
+        cv.drawBitmap(metal, x, y, new Paint(Paint.FILTER_BITMAP_FLAG));
+        mask.recycle();
+        metal.recycle();
+        return out;
+    }
+
+    /** The background colour to compare against at (x, y): the icon's edge colour on that row. */
+    private static int edgeAt(Bitmap b, int x, int y, int fallback) {
+        int e = Math.round(b.getWidth() * 0.06f);
+        int c = b.getPixel(x < b.getWidth() / 2 ? e : b.getWidth() - 1 - e, y);
+        return Color.alpha(c) > 220 ? c : fallback;
+    }
+
+    private static int colorDistance(int a, int b) {
+        return Math.abs(Color.red(a) - Color.red(b)) + Math.abs(Color.green(a) - Color.green(b))
+                + Math.abs(Color.blue(a) - Color.blue(b));
+    }
+
+    /** Gloss, rim and rounded corners on top of the artwork. */
+    private static Bitmap finishTile(AppEntry app, Bitmap b, int w, int h, float r) {
+        Canvas cv = new Canvas(b);
         Paint gloss = new Paint();
         gloss.setShader(new LinearGradient(0, 0, 0, h * 0.5f, 0x33FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP));
         cv.drawRect(0, 0, w, h * 0.5f, gloss);

@@ -41,6 +41,7 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -100,6 +101,10 @@ public class MainActivity extends Activity implements ControlCenter.Host, TopShe
     private FrameLayout ccLayer, menuLayer;
     private GlassView movePill;
     private TopShelf shelf;
+    private String appearance;
+    private View ambient;
+    private GradientDrawable ambientFill;
+    private ImageView upHint;
     private FrameLayout folderLayer;
     private AppEntry openFolderEntry;
     private final List<TileView> folderTiles = new ArrayList<>();
@@ -134,9 +139,10 @@ public class MainActivity extends Activity implements ControlCenter.Host, TopShe
         @Override
         public void run() {
             clock.setText(DateFormat.getTimeFormat(MainActivity.this).format(new Date()));
-            // Night mode: the wallpaper dims from 9 pm to 6 am.
+            // Night mode: the wallpaper dims from 9 pm to 6 am; Dark Mode dims it a little more.
             int hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY);
-            nightDim.animate().alpha(hour >= 21 || hour < 6 ? 0.22f : 0f).setDuration(1500).start();
+            float night = hour >= 21 || hour < 6 ? 0.22f : 0f;
+            nightDim.animate().alpha(Math.max(night, Appearance.dark(MainActivity.this) ? 0.32f : 0f)).setDuration(1500).start();
             handler.postDelayed(this, 60_000 - System.currentTimeMillis() % 60_000);
         }
     };
@@ -154,6 +160,9 @@ public class MainActivity extends Activity implements ControlCenter.Host, TopShe
         super.onCreate(savedInstanceState);
         Ui.init(this);
         Ui.readDebugFlags();
+        GlassView.loadStyle(this);
+        Ui.iconPack = Appearance.iconPack(this);
+        appearance = Appearance.signature(this);
         prefs = getSharedPreferences("home", MODE_PRIVATE);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                 | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
@@ -220,6 +229,21 @@ public class MainActivity extends Activity implements ControlCenter.Host, TopShe
         if (Ui.off("autopilot")) handler.postDelayed(autopilot, 2000);
         if (dirty) reload();
         ensureKeyService();
+        // Appearance changed (glass style, dark mode, blur, Top Shelf style): redraw.
+        String sig = Appearance.signature(this);
+        if (!sig.equals(appearance)) {
+            appearance = sig;
+            GlassView.loadStyle(this);
+            if (!Ui.iconPack.equals(Appearance.iconPack(this))) {
+                Ui.iconPack = Appearance.iconPack(this);
+                dockApps.clear();
+                gridApps.clear();
+                reload(); // re-bakes every icon in the new style
+            }
+            loadWallpaper(prefs.getInt(Profiles.key(prefs, "wall"), Calendar.getInstance().get(Calendar.DAY_OF_YEAR)), true, null);
+            backdrop.invalidateWatchers();
+            handler.post(clockTick);
+        }
         // Continue Watching may have changed while an app was open.
         View cur = getCurrentFocus();
         shelf.refresh(cur instanceof TileView && dockApps.contains(((TileView) cur).app) ? (TileView) cur : null);
@@ -329,9 +353,25 @@ public class MainActivity extends Activity implements ControlCenter.Host, TopShe
         nightDim.setAlpha(0f);
         root.addView(nightDim, new FrameLayout.LayoutParams(-1, -1));
 
+        // Ambient colour: the screen washes with the focused dock app's brand colour.
+        ambient = new View(this);
+        ambientFill = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[] {0xE6000000, 0x99000000, 0x26000000});
+        ambient.setBackground(ambientFill);
+        ambient.setAlpha(0f);
+        root.addView(ambient, new FrameLayout.LayoutParams(-1, -1));
+
         // Top Shelf: full-screen artwork of the focused dock app's content, behind the dock.
-        shelf = new TopShelf(this, this, screenW, margin, Ui.dp(118), screenH - dockTop + Ui.dp(16));
+        shelf = new TopShelf(this, this, screenW, margin, Ui.dp(118), screenH - dockTop + Ui.dp(16), dockTop);
         root.addView(shelf, new FrameLayout.LayoutParams(-1, -1));
+
+        // A small chevron above the dock when there's something to press Up into.
+        upHint = new ImageView(this);
+        upHint.setImageResource(R.drawable.ic_chevron_up);
+        upHint.setAlpha(0f);
+        FrameLayout.LayoutParams uhLp = new FrameLayout.LayoutParams(Ui.dp(22), Ui.dp(22), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        uhLp.topMargin = dockTop - Ui.dp(50); // just above the Top Shelf page dots
+        root.addView(upHint, uhLp);
 
         scroller = new TvScrollView(this);
         scroller.setClipChildren(false);
@@ -559,6 +599,7 @@ public class MainActivity extends Activity implements ControlCenter.Host, TopShe
                 e.colorTop = 0xFF9A9AA0;
                 e.colorBottom = 0xFF545458;
             } else {
+                e.icon = loadHiResIcon(pm, ai);
                 Drawable banner = leanback ? ai.loadBanner(pm) : null;
                 if (banner == null && leanback) banner = ai.applicationInfo.loadBanner(pm);
                 e.banner = banner;
@@ -571,6 +612,21 @@ public class MainActivity extends Activity implements ControlCenter.Host, TopShe
             }
             found.put(pkg, e);
         }
+    }
+
+    /** The launcher icon at the highest density the app ships (crisp when drawn large). */
+    private static Drawable loadHiResIcon(PackageManager pm, ActivityInfo ai) {
+        try {
+            int res = ai.getIconResource();
+            if (res == 0) res = ai.applicationInfo.icon;
+            if (res != 0) {
+                Drawable d = pm.getResourcesForApplication(ai.applicationInfo)
+                        .getDrawableForDensity(res, android.util.DisplayMetrics.DENSITY_XXXHIGH, null);
+                if (d != null) return d;
+            }
+        } catch (Exception ignored) {
+        }
+        return ai.loadIcon(pm);
     }
 
     private void saveOrder() {
@@ -714,6 +770,7 @@ public class MainActivity extends Activity implements ControlCenter.Host, TopShe
         focusKey = t.app.key;
         if (r == 0 && t.app.members == null && !t.app.key.startsWith("@")) shelf.showFor(t);
         else shelf.hide();
+        tintFor(r == 0 && t.app.members == null ? t.app : null);
         if (r > 0 && r < rows.size() && rows.get(r).getTop() == 0) {
             // Grid just rebuilt and not laid out yet: scroll once it is.
             scroller.post(() -> onTileFocused(t, r));
@@ -1464,6 +1521,8 @@ public class MainActivity extends Activity implements ControlCenter.Host, TopShe
                 return true;
             }
             if (f != null && isInside(f, shelf)) {
+                if (k == KeyEvent.KEYCODE_DPAD_UP && shelf.onUp()) return true;
+                if ((k == KeyEvent.KEYCODE_DPAD_DOWN || k == KeyEvent.KEYCODE_BACK) && shelf.onDown()) return true;
                 if (k == KeyEvent.KEYCODE_DPAD_DOWN || k == KeyEvent.KEYCODE_BACK) {
                     TileView o = shelf.owner();
                     shelf.exit();
@@ -1488,12 +1547,53 @@ public class MainActivity extends Activity implements ControlCenter.Host, TopShe
         return super.dispatchKeyEvent(e);
     }
 
+    @Override
+    public void onShelfContent(boolean shown) {
+        // Full Screen style: above the page dots. Row style: in the gap between cards and dock.
+        boolean row = "row".equals(prefs.getString(TopShelf.STYLE, "full"));
+        upHint.setTranslationY(row ? Ui.dp(32) : 0f);
+        upHint.animate().alpha(shown ? 0.75f : 0f).setDuration(220).start();
+    }
+
+    private final Map<String, Integer> appColors = new HashMap<>();
+    private ValueAnimator tintAnim;
+    private int tintColor = 0xFF000000;
+
+    /** Washes the screen in {@code app}'s brand colour (null: fade it out). */
+    private void tintFor(AppEntry app) {
+        boolean on = app != null && prefs.getBoolean("ambient", true);
+        if (!on) {
+            ambient.animate().alpha(0f).setDuration(300).start();
+            return;
+        }
+        Integer c = appColors.get(app.key);
+        if (c == null) {
+            Drawable art = app.tile != null ? new android.graphics.drawable.BitmapDrawable(getResources(), app.tile)
+                    : app.banner != null ? app.banner : app.glyph;
+            c = Ui.shade(Ui.averageColor(art), 0.9f);
+            appColors.put(app.key, c);
+        }
+        final int from = tintColor, to = c;
+        if (tintAnim != null) tintAnim.cancel();
+        tintAnim = ValueAnimator.ofObject(new android.animation.ArgbEvaluator(), from, to);
+        tintAnim.setDuration(450);
+        tintAnim.addUpdateListener(a -> {
+            int col = (int) a.getAnimatedValue();
+            tintColor = col;
+            int rgb = col & 0x00FFFFFF;
+            ambientFill.setColors(new int[] {0xC7000000 | rgb, 0x80000000 | rgb, 0x1A000000 | rgb});
+        });
+        tintAnim.start();
+        ambient.animate().alpha(1f).setDuration(350).start();
+    }
+
     /** The Top Shelf carousel took focus: slide the dock and grid away (and back). */
     @Override
     public void onCarousel(boolean active) {
         scroller.animate().translationY(active ? screenH - dockTop + Ui.dp(24) : 0f)
                 .setDuration(active ? 420 : 380).setInterpolator(new DecelerateInterpolator(1.8f)).start();
         topBar.animate().alpha(active ? 0f : 1f).setDuration(250).start();
+        upHint.animate().alpha(active ? 0f : 0.75f).setDuration(200).start();
     }
 
     private static boolean isInside(View v, View parent) {

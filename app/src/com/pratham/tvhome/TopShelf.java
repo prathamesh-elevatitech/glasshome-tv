@@ -54,7 +54,13 @@ final class TopShelf extends FrameLayout {
     interface Host {
         /** The carousel took or gave up focus: slide the dock away / back. */
         void onCarousel(boolean active);
+
+        /** Content appeared or went away (e.g. to show the "press Up" hint). */
+        void onShelfContent(boolean shown);
     }
+
+    /** Settings key for the Top Shelf style: "full" (default, full-screen carousel) or "row". */
+    static final String STYLE = "shelf_style";
 
     private static final long TTL = 60_000;
     private static final long PAGE_MS = 7000;
@@ -86,6 +92,17 @@ final class TopShelf extends FrameLayout {
     private int page;
     private boolean active;
     private TileView owner;
+    // Row style (optional): a labelled row of 16:9 cards above the dock; Up again shows a clean
+    // full-screen backdrop with the app's logo over its colour.
+    private final List<View> fullParts = new ArrayList<>();
+    private FrameLayout rowLayer;
+    private TextView rowHeading;
+    private android.widget.HorizontalScrollView rowScroller;
+    private LinearLayout rowCards;
+    private ImageView logo;
+    private View backdropFocus;
+    private int cardW, cardH, margin;
+    private boolean rowMode, backdrop;
 
     private final Runnable pending = () -> load(pendingPkg);
     private final Runnable advance = new Runnable() {
@@ -96,10 +113,11 @@ final class TopShelf extends FrameLayout {
         }
     };
 
-    TopShelf(Context c, Host host, int screenW, int margin, int infoTop, int dotsBottom) {
+    TopShelf(Context c, Host host, int screenW, int margin, int infoTop, int dotsBottom, int dockTop) {
         super(c);
         this.host = host;
         this.screenW = screenW;
+        this.margin = margin;
         setClipChildren(false);
         setAlpha(0f);
         setVisibility(INVISIBLE);
@@ -111,19 +129,23 @@ final class TopShelf extends FrameLayout {
             iv.setAlpha(0f);
             hero[i] = iv;
             addView(iv, new LayoutParams(-1, -1));
+            fullParts.add(iv);
         }
         View left = new View(c);
         left.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
                 new int[] {0xCC000000, 0x66000000, 0x00000000}));
         addView(left, new LayoutParams(Math.round(screenW * 0.62f), -1));
+        fullParts.add(left);
         View bottom = new View(c);
         bottom.setBackground(new GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
                 new int[] {0xE6000000, 0x80000000, 0x00000000}));
         addView(bottom, new LayoutParams(-1, Ui.dp(300), Gravity.BOTTOM));
+        fullParts.add(bottom);
         View top = new View(c);
         top.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
                 new int[] {0x73000000, 0x00000000}));
         addView(top, new LayoutParams(-1, Ui.dp(140), Gravity.TOP));
+        fullParts.add(top);
 
         info = new LinearLayout(c);
         info.setOrientation(LinearLayout.VERTICAL);
@@ -215,12 +237,15 @@ final class TopShelf extends FrameLayout {
         ilp.leftMargin = margin;
         ilp.topMargin = infoTop;
         addView(info, ilp);
+        fullParts.add(info);
 
         dots = new LinearLayout(c);
         dots.setOrientation(LinearLayout.HORIZONTAL);
         LayoutParams dlp = new LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         dlp.bottomMargin = dotsBottom;
         addView(dots, dlp);
+        fullParts.add(dots);
+        buildRowLayer(c, dockTop);
     }
 
     // ---------------------------------------------------------------- state
@@ -255,6 +280,7 @@ final class TopShelf extends FrameLayout {
         h.removeCallbacks(advance);
         if (active) exit();
         if (getVisibility() != VISIBLE) return;
+        host.onShelfContent(false);
         animate().alpha(0f).setDuration(260).withEndAction(() -> {
             if (wantedPkg != null) return;
             setVisibility(INVISIBLE);
@@ -274,6 +300,10 @@ final class TopShelf extends FrameLayout {
     void enter() {
         if (!hasContent()) return;
         active = true;
+        if (rowMode) {
+            if (rowCards.getChildCount() > 0) rowCards.getChildAt(0).requestFocus();
+            return;
+        }
         h.removeCallbacks(advance);
         playLabel.setText(items.get(page).resume ? "Resume" : "Play");
         buttons.setVisibility(VISIBLE);
@@ -287,6 +317,10 @@ final class TopShelf extends FrameLayout {
     void exit() {
         if (!active) return;
         active = false;
+        if (rowMode) {
+            if (backdrop) showBackdrop(false);
+            return;
+        }
         buttons.animate().alpha(0f).setDuration(180).withEndAction(() -> buttons.setVisibility(GONE)).start();
         host.onCarousel(false);
         h.removeCallbacks(advance);
@@ -328,6 +362,19 @@ final class TopShelf extends FrameLayout {
         boolean same = pkg.equals(shownPkg);
         shownPkg = pkg;
         items = found;
+        host.onShelfContent(true);
+        rowMode = "row".equals(Profiles.prefs(getContext()).getString(STYLE, "full"));
+        for (View v : fullParts) v.setVisibility(rowMode ? GONE : VISIBLE);
+        rowLayer.setVisibility(rowMode ? VISIBLE : GONE);
+        if (rowMode) {
+            buildRow(found);
+            h.removeCallbacks(advance);
+            if (getVisibility() != VISIBLE || getAlpha() < 1f) {
+                setVisibility(VISIBLE);
+                animate().alpha(1f).setDuration(320).setInterpolator(new DecelerateInterpolator()).start();
+            }
+            return;
+        }
         dots.removeAllViews();
         for (int i = 0; i < items.size(); i++) {
             View d = new View(getContext());
@@ -347,6 +394,189 @@ final class TopShelf extends FrameLayout {
         }
         h.removeCallbacks(advance);
         if (!active) h.postDelayed(advance, PAGE_MS);
+    }
+
+    // ---------------------------------------------------------------- row style (optional)
+
+    /** Up inside the shelf. Returns true if handled (Row style: cards → clean backdrop). */
+    boolean onUp() {
+        if (rowMode && active && !backdrop) {
+            showBackdrop(true);
+            return true;
+        }
+        return false;
+    }
+
+    /** Down inside the shelf. Returns true if handled here (backdrop → back to the cards). */
+    boolean onDown() {
+        if (rowMode && backdrop) {
+            showBackdrop(false);
+            if (rowCards.getChildCount() > 0) rowCards.getChildAt(Math.min(page, rowCards.getChildCount() - 1)).requestFocus();
+            return true;
+        }
+        return false;
+    }
+
+    /** The clean full-screen backdrop: just the app's logo over its colour; the dock slides away. */
+    private void showBackdrop(boolean on) {
+        backdrop = on;
+        if (on) {
+            logo.setImageBitmap(owner != null ? owner.app.tile : null);
+            logo.setScaleX(0.9f);
+            logo.setScaleY(0.9f);
+            logo.setVisibility(VISIBLE);
+            logo.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(420)
+                    .setInterpolator(new DecelerateInterpolator()).start();
+            rowLayer.animate().alpha(0f).setDuration(220).start();
+            backdropFocus.requestFocus();
+        } else {
+            logo.animate().alpha(0f).setDuration(200).withEndAction(() -> logo.setVisibility(INVISIBLE)).start();
+            rowLayer.animate().alpha(1f).setDuration(260).start();
+        }
+        host.onCarousel(on);
+    }
+
+    private void buildRowLayer(Context c, int dockTop) {
+        cardH = Ui.dp(150);
+        cardW = Math.round(cardH * 16 / 9f);
+        rowLayer = new FrameLayout(c);
+        rowLayer.setClipChildren(false);
+        rowLayer.setVisibility(GONE);
+        rowHeading = Ui.text(c, 17, Ui.semibold, Color.WHITE);
+        rowHeading.setShadowLayer(Ui.dp(10), 0, Ui.dp(1), 0x80000000);
+        LayoutParams hlp = new LayoutParams(-2, -2, Gravity.TOP | Gravity.START);
+        hlp.leftMargin = margin + Ui.dp(4);
+        rowLayer.addView(rowHeading, hlp);
+        rowScroller = new android.widget.HorizontalScrollView(c);
+        rowScroller.setHorizontalScrollBarEnabled(false);
+        rowScroller.setClipChildren(false);
+        rowScroller.setOverScrollMode(OVER_SCROLL_NEVER);
+        rowCards = new LinearLayout(c);
+        rowCards.setOrientation(LinearLayout.HORIZONTAL);
+        rowCards.setClipChildren(false);
+        rowCards.setClipToPadding(false);
+        rowCards.setPadding(margin, Ui.dp(12), margin, Ui.dp(12));
+        rowScroller.addView(rowCards, new android.widget.HorizontalScrollView.LayoutParams(-2, -2));
+        LayoutParams slp = new LayoutParams(-1, -2);
+        slp.topMargin = Ui.dp(28);
+        rowLayer.addView(rowScroller, slp);
+        LayoutParams rlp = new LayoutParams(-1, -2, Gravity.TOP);
+        rlp.topMargin = dockTop - cardH - Ui.dp(28 + 12 + 30);
+        addView(rowLayer, rlp);
+
+        logo = new ImageView(c);
+        logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        logo.setAlpha(0f);
+        logo.setVisibility(INVISIBLE);
+        logo.setElevation(Ui.dp(20));
+        Ui.round(logo, 28);
+        int lw = Math.round(screenW * 0.34f);
+        addView(logo, new LayoutParams(lw, Math.round(lw * 0.6f), Gravity.CENTER));
+        // Holds focus while the backdrop is shown (nothing on screen is selectable then).
+        backdropFocus = new View(c);
+        backdropFocus.setFocusable(true);
+        backdropFocus.setDefaultFocusHighlightEnabled(false);
+        addView(backdropFocus, new LayoutParams(1, 1));
+    }
+
+    private void buildRow(List<Item> found) {
+        rowHeading.setText(found.get(0).resume ? "Continue Watching" : "Recommended for you");
+        rowCards.removeAllViews();
+        for (int i = 0; i < found.size(); i++) {
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(cardW, cardH);
+            if (i > 0) lp.leftMargin = Ui.dp(24);
+            rowCards.addView(rowCard(found.get(i), i), lp);
+        }
+        rowScroller.scrollTo(0, 0);
+        rowLayer.setAlpha(1f);
+    }
+
+    /** A 16:9 card with the title and subtitle over a bottom gradient. */
+    private View rowCard(final Item it, final int index) {
+        final Context c = getContext();
+        final FrameLayout art = new FrameLayout(c) {
+            @Override
+            protected void onFocusChanged(boolean f, int dir, android.graphics.Rect prev) {
+                super.onFocusChanged(f, dir, prev);
+                if (f) {
+                    Ui.tick(getContext());
+                    page = index;
+                    rowScroller.smoothScrollTo(Math.max(0, getLeft() - margin - Ui.dp(40)), 0);
+                }
+                animate().scaleX(f ? 1.08f : 1f).scaleY(f ? 1.08f : 1f).translationZ(f ? Ui.dp(18) : 0)
+                        .setDuration(f ? 380 : 200)
+                        .setInterpolator(f ? Ui.spring(9f, 9f) : new DecelerateInterpolator()).start();
+            }
+        };
+        Ui.round(art, 16);
+        art.setBackgroundColor(0xFF1C1C1E);
+        art.setFocusable(true);
+        art.setClickable(true);
+        art.setDefaultFocusHighlightEnabled(false);
+        final ImageView img = new ImageView(c);
+        img.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        art.addView(img, new LayoutParams(-1, -1));
+        View shade = new View(c);
+        shade.setBackground(new GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
+                new int[] {0xCC000000, 0x33000000, 0x00000000}));
+        art.addView(shade, new LayoutParams(-1, Math.round(cardH * 0.6f), Gravity.BOTTOM));
+        LinearLayout text = new LinearLayout(c);
+        text.setOrientation(LinearLayout.VERTICAL);
+        TextView t1 = Ui.text(c, 14, Ui.semibold, Color.WHITE);
+        t1.setText(it.title);
+        t1.setSingleLine(true);
+        t1.setEllipsize(TextUtils.TruncateAt.END);
+        text.addView(t1);
+        String sub = !TextUtils.isEmpty(it.subtitle) ? it.subtitle : it.description;
+        if (!TextUtils.isEmpty(sub)) {
+            TextView t2 = Ui.text(c, 11, Ui.medium, 0xCCFFFFFF);
+            t2.setText(sub);
+            t2.setSingleLine(true);
+            t2.setEllipsize(TextUtils.TruncateAt.END);
+            t2.setPadding(0, Ui.dp(3), 0, 0);
+            text.addView(t2);
+        }
+        if (it.progress >= 0f) {
+            FrameLayout track = new FrameLayout(c);
+            GradientDrawable tb = new GradientDrawable();
+            tb.setColor(0x59FFFFFF);
+            tb.setCornerRadius(Ui.dp(2));
+            track.setBackground(tb);
+            View bar = new View(c);
+            GradientDrawable bb = new GradientDrawable();
+            bb.setColor(Color.WHITE);
+            bb.setCornerRadius(Ui.dp(2));
+            bar.setBackground(bb);
+            int tw = cardW - Ui.dp(28);
+            track.addView(bar, new LayoutParams(Math.max(Ui.dp(4), Math.round(tw * it.progress)), -1));
+            LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(tw, Ui.dp(4));
+            plp.topMargin = Ui.dp(7);
+            text.addView(track, plp);
+        }
+        LayoutParams tlp = new LayoutParams(-1, -2, Gravity.BOTTOM);
+        tlp.leftMargin = Ui.dp(14);
+        tlp.rightMargin = Ui.dp(14);
+        tlp.bottomMargin = Ui.dp(11);
+        art.addView(text, tlp);
+
+        img.setTag(it.art);
+        Bitmap b = images.get(it.art);
+        if (b != null) img.setImageBitmap(b);
+        else io.execute(() -> {
+            Bitmap got = fetch(it.art);
+            h.post(() -> {
+                if (got != null && it.art.equals(img.getTag())) {
+                    img.setAlpha(0f);
+                    img.setImageBitmap(got);
+                    img.animate().alpha(1f).setDuration(220).start();
+                }
+            });
+        });
+        art.setOnClickListener(v -> {
+            page = index;
+            openCurrent();
+        });
+        return art;
     }
 
     /** Cross-fades to item {@code i}: artwork, then text. */

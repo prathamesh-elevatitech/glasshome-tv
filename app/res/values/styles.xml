@@ -20,4 +20,14 @@
         <item name="android:taskToBackEnterAnimation">@anim/none</item>
         <item name="android:taskCloseEnterAnimation">@anim/none</item>
     </style>
+
+    <!-- Settings panels float over the home screen. -->
+    <style name="PanelTheme" parent="@android:style/Theme.Material.NoActionBar.Fullscreen">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:defaultFocusHighlightEnabled">false</item>
+    </style>
 </resources>

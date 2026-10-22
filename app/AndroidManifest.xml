@@ -75,16 +75,23 @@
             android:screenOrientation="landscape" />
 
         <activity
+            android:name=".AppearanceSettings"
+            android:exported="false"
+            android:theme="@style/PanelTheme"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape" />
+
+        <activity
             android:name=".ControlCenterSettings"
             android:exported="false"
-            android:theme="@style/AppTheme"
+            android:theme="@style/PanelTheme"
             android:excludeFromRecents="true"
             android:screenOrientation="landscape" />
 
         <activity
             android:name=".ScreenSaverSettings"
             android:exported="false"
-            android:theme="@style/AppTheme"
+            android:theme="@style/PanelTheme"
             android:excludeFromRecents="true"
             android:screenOrientation="landscape" />
 

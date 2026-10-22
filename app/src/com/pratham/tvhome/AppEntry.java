@@ -13,6 +13,8 @@ final class AppEntry {
     /** 16:9 TV banner, when the app ships one. Otherwise the tile shows {@link #glyph} on a gradient. */
     Drawable banner;
     Drawable glyph;
+    /** The app's launcher icon (adaptive when available), used by the tvOS icon pack. */
+    Drawable icon;
     int colorTop;
     int colorBottom;
 
